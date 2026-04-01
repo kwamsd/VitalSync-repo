@@ -9,8 +9,8 @@ on:
       - main
 
 env:
-  BACKEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/vitalsync-backend
-  FRONTEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/vitalsync-frontend
+  BACKEND_IMAGE_LOCAL: vitalsync-backend
+  FRONTEND_IMAGE_LOCAL: vitalsync-frontend
   IMAGE_TAG: ${{ github.sha }}
 
 jobs:
@@ -22,12 +22,12 @@ jobs:
         working-directory: backend
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Installation des dépendances
         run: npm install
@@ -44,13 +44,25 @@ jobs:
     needs: lint_tests
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Build image backend (tag SHA)
-        run: docker build -t $BACKEND_IMAGE:$IMAGE_TAG -f backend/Dockerfile ./backend
+        run: docker build -t $BACKEND_IMAGE_LOCAL:$IMAGE_TAG -f backend/Dockerfile ./backend
 
       - name: Build image frontend (tag SHA)
-        run: docker build -t $FRONTEND_IMAGE:$IMAGE_TAG -f frontend/Dockerfile ./frontend
+        run: docker build -t $FRONTEND_IMAGE_LOCAL:$IMAGE_TAG -f frontend/Dockerfile ./frontend
+
+      - name: Vérification des secrets Docker Hub
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+        run: |
+          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
+            echo "Secret manquant : DOCKERHUB_USERNAME"
+            exit 1
+          fi
+          if [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "Secret manquant : DOCKERHUB_TOKEN"
+            exit 1
+          fi
 
       - name: Connexion Docker Hub
         if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
@@ -61,11 +73,15 @@ jobs:
 
       - name: Push image backend
         if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
-        run: docker push $BACKEND_IMAGE:$IMAGE_TAG
+        run: |
+          docker tag $BACKEND_IMAGE_LOCAL:$IMAGE_TAG ${{ secrets.DOCKERHUB_USERNAME }}/vitalsync-backend:$IMAGE_TAG
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/vitalsync-backend:$IMAGE_TAG
 
       - name: Push image frontend
         if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
-        run: docker push $FRONTEND_IMAGE:$IMAGE_TAG
+        run: |
+          docker tag $FRONTEND_IMAGE_LOCAL:$IMAGE_TAG ${{ secrets.DOCKERHUB_USERNAME }}/vitalsync-frontend:$IMAGE_TAG
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/vitalsync-frontend:$IMAGE_TAG
 
   deploy_staging:
     name: Déploiement staging et health check
@@ -74,7 +90,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Génération du .env de staging
         run: |
