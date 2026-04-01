@@ -12,4 +12,3 @@ build/
 .vscode/
 .idea/
 docker-compose.override.yml
-EOF
