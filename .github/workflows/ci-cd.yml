@@ -1,0 +1,110 @@
+name: CI-CD VitalSync
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - main
+
+env:
+  BACKEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/vitalsync-backend
+  FRONTEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/vitalsync-frontend
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  lint_tests:
+    name: Lint et tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Installation des dépendances
+        run: npm install
+
+      - name: Lint ESLint
+        run: npm run lint
+
+      - name: Tests Jest
+        run: npm test
+
+  build_docker:
+    name: Build Docker et push registry
+    runs-on: ubuntu-latest
+    needs: lint_tests
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image backend (tag SHA)
+        run: docker build -t $BACKEND_IMAGE:$IMAGE_TAG -f backend/Dockerfile ./backend
+
+      - name: Build image frontend (tag SHA)
+        run: docker build -t $FRONTEND_IMAGE:$IMAGE_TAG -f frontend/Dockerfile ./frontend
+
+      - name: Connexion Docker Hub
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push image backend
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+        run: docker push $BACKEND_IMAGE:$IMAGE_TAG
+
+      - name: Push image frontend
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+        run: docker push $FRONTEND_IMAGE:$IMAGE_TAG
+
+  deploy_staging:
+    name: Déploiement staging et health check
+    runs-on: ubuntu-latest
+    needs: build_docker
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Génération du .env de staging
+        run: |
+          cat > .env << 'EOF'
+          POSTGRES_DB=vitalsync
+          POSTGRES_USER=vitalsync_user
+          POSTGRES_PASSWORD=vitalsync_password_ci
+          POSTGRES_PORT=5432
+          NODE_ENV=production
+          BACKEND_PORT=3000
+          FRONTEND_PORT=8080
+          EOF
+
+      - name: Déploiement docker compose
+        run: docker compose up -d --build
+
+      - name: Health check backend
+        run: |
+          for i in {1..15}; do
+            if curl -fsS http://localhost:3000/health > /dev/null; then
+              echo "Health check OK"
+              exit 0
+            fi
+            echo "Backend indisponible, tentative $i/15"
+            sleep 2
+          done
+          echo "Health check KO"
+          docker compose logs backend
+          exit 1
+
+      - name: Nettoyage
+        if: always()
+        run: docker compose down -v
