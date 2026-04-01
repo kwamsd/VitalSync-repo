@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-deployment
+  labels:
+    app: vitalsync-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vitalsync-frontend
+  template:
+    metadata:
+      labels:
+        app: vitalsync-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: kwams20/vitalsync-frontend:e4f57f3
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
